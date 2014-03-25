@@ -30,10 +30,20 @@ const (
 )
 
 type Proxy struct {
-	PKFile       string
-	CertFile     string
+	// PKFile: the PEM-encoded file to use as the primary key for this server
+	PKFile string
+
+	// CertFile: the PEM-encoded X509 certificate to use for this server (must match PKFile)
+	CertFile string
+
+	// Organization: Name of the organization to use on the generated CA cert for this proxy
 	Organization string
-	CommonName   string
+
+	// CommonName: CommonName to use on the generated CA cert for this proxy
+	CommonName string
+
+	// HandlerFunc: function that mitm proxy uses to handle requests (default is DefaultHandlerFunc)
+	HandlerFunc func(resp http.ResponseWriter, req *http.Request)
 
 	addr           string
 	pk             *keyman.PrivateKey
@@ -53,6 +63,7 @@ func NewProxy(pkFile string, certFile string, addr string) (proxy *Proxy, err er
 		PKFile:       pkFile,
 		CertFile:     certFile,
 		Organization: "gomitm",
+		HandlerFunc:  DefaultHandlerFunc,
 		addr:         addr,
 		dynamicCerts: make(map[string]*tls.Certificate),
 	}
@@ -101,7 +112,7 @@ func (proxy *Proxy) Start() (err chan error) {
 			},
 		},
 		Addr:         proxy.addr,
-		Handler:      http.HandlerFunc(proxy.handleRequest),
+		Handler:      http.HandlerFunc(proxy.HandlerFunc),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 	}
@@ -133,7 +144,8 @@ func (proxy *Proxy) Intercept(resp http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (proxy *Proxy) handleRequest(resp http.ResponseWriter, req *http.Request) {
+// DefaultHandlerFunc is the default handler function for an mitm proxy
+func DefaultHandlerFunc(resp http.ResponseWriter, req *http.Request) {
 	rp := httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			// Transform the URL into an absolute URL including protocol (for downstream proxy)
