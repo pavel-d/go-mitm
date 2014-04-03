@@ -1,4 +1,4 @@
-// This example shows a proxy server that uses gomitm to man-in-the-middle
+// This example shows a proxy server that uses go-mitm to man-in-the-middle
 // HTTPS connections opened with CONNECT requests
 
 package main
@@ -24,8 +24,7 @@ const (
 	PK_FILE   = "proxypk.pem"
 	CERT_FILE = "proxycert.pem"
 
-	HTTP_ADDR  = "127.0.0.1:8080"
-	HTTPS_ADDR = "127.0.0.1:8081"
+	HTTP_ADDR = "127.0.0.1:8080"
 )
 
 var (
@@ -34,7 +33,7 @@ var (
 
 func init() {
 	var err error
-	proxy, err = mitm.NewProxy(PK_FILE, CERT_FILE, HTTPS_ADDR)
+	proxy, err = mitm.NewProxy(PK_FILE, CERT_FILE)
 	if err != nil {
 		log.Fatalf("Unable to initialize mitm proxy: %s", err)
 	}
@@ -42,11 +41,6 @@ func init() {
 
 func main() {
 	httpFinished := runHTTPServer()
-	httpsFinished := proxy.Start()
-
-	if err := <-httpsFinished; err != nil {
-		log.Fatalf("Error running mitm proxy")
-	}
 	<-httpFinished
 }
 
