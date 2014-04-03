@@ -95,8 +95,8 @@ func (proxy *Proxy) Start() (err chan error) {
 			CertificateForName: func(name string) (cert *tls.Certificate, err error) {
 				proxy.certMutex.Lock()
 				defer proxy.certMutex.Unlock()
-				kpCandidate, ok := proxy.dynamicCerts[name]
-				if ok {
+				kpCandidate, found := proxy.dynamicCerts[name]
+				if found {
 					return kpCandidate, nil
 				}
 				generatedCert, err := proxy.certificateFor(name, proxy.issuingCert)
