@@ -12,7 +12,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"net/http/httputil"
 	"strings"
 	"sync"
 	"time"
@@ -24,9 +23,6 @@ const (
 
 	PK_FILE   = "proxypk.pem"
 	CERT_FILE = "proxycert.pem"
-
-	HTTP_ADDR  = "127.0.0.1:8080"
-	HTTPS_ADDR = "127.0.0.1:8081"
 )
 
 type Proxy struct {
@@ -42,10 +38,6 @@ type Proxy struct {
 	// CommonName: CommonName to use on the generated CA cert for this proxy
 	CommonName string
 
-	// HandlerFunc: function that mitm proxy uses to handle requests (default is DefaultHandlerFunc)
-	HandlerFunc func(resp http.ResponseWriter, req *http.Request)
-
-	addr           string
 	pk             *keyman.PrivateKey
 	pkPem          []byte
 	issuingCert    *keyman.Certificate
@@ -54,17 +46,14 @@ type Proxy struct {
 	certMutex      sync.Mutex
 }
 
-// NewProxy creates a new Proxy using primary key and certificate at
-// the specified paths and listening at the given address.  If no primary key
-// and/or certificate can be found at the given paths, they will be
-// automatically generated.
-func NewProxy(pkFile string, certFile string, addr string) (proxy *Proxy, err error) {
+// NewProxy creates a new Proxy using primary key and certificate at the
+// specified paths.  If no primary key and/or certificate can be found at the
+// given paths, they will be automatically generated.
+func NewProxy(pkFile string, certFile string) (proxy *Proxy, err error) {
 	proxy = &Proxy{
 		PKFile:       pkFile,
 		CertFile:     certFile,
 		Organization: "gomitm",
-		HandlerFunc:  DefaultHandlerFunc,
-		addr:         addr,
 		dynamicCerts: make(map[string]*tls.Certificate),
 	}
 	if proxy.pk, err = keyman.LoadPKFromFile(pkFile); err != nil {
@@ -86,75 +75,53 @@ func NewProxy(pkFile string, certFile string, addr string) (proxy *Proxy, err er
 	return
 }
 
-// Start() starts the Proxy, which will listen on the configured Proxy.addr
-func (proxy *Proxy) Start() (err chan error) {
-	err = make(chan error)
-
-	server := &http.Server{
-		TLSConfig: &tls.Config{
-			CertificateForName: func(name string) (cert *tls.Certificate, err error) {
-				proxy.certMutex.Lock()
-				defer proxy.certMutex.Unlock()
-				kpCandidate, ok := proxy.dynamicCerts[name]
-				if ok {
-					return kpCandidate, nil
-				}
-				generatedCert, err := proxy.certificateFor(name, proxy.issuingCert)
-				if err != nil {
-					return nil, fmt.Errorf("Unable to issue certificate: %s", err)
-				}
-				keyPair, err := tls.X509KeyPair(generatedCert.PEMEncoded(), proxy.pkPem)
-				if err != nil {
-					return nil, fmt.Errorf("Unable to parse keypair for tls: %s", err)
-				}
-				proxy.dynamicCerts[name] = &keyPair
-				return &keyPair, nil
-			},
-		},
-		Addr:         proxy.addr,
-		Handler:      http.HandlerFunc(proxy.HandlerFunc),
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+func (proxy *Proxy) mitmCertForName(name string) (cert *tls.Certificate, err error) {
+	proxy.certMutex.Lock()
+	defer proxy.certMutex.Unlock()
+	kpCandidate, found := proxy.dynamicCerts[name]
+	if found {
+		return kpCandidate, nil
 	}
-
-	go func() {
-		if _err := server.ListenAndServeTLS(proxy.CertFile, proxy.PKFile); _err != nil {
-			err <- fmt.Errorf("Unable to start HTTPS proxy: %s", err)
-		}
-		err <- nil
-	}()
-
-	return
+	generatedCert, err := proxy.certificateFor(name, proxy.issuingCert)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to issue certificate: %s", err)
+	}
+	keyPair, err := tls.X509KeyPair(generatedCert.PEMEncoded(), proxy.pkPem)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to parse keypair for tls: %s", err)
+	}
+	proxy.dynamicCerts[name] = &keyPair
+	return &keyPair, nil
 }
 
 // Intercept intercepts the given request and starts mitm'ing it
 func (proxy *Proxy) Intercept(resp http.ResponseWriter, req *http.Request) {
-	if connIn, _, err := resp.(http.Hijacker).Hijack(); err != nil {
+	addr := hostIncludingPort(req)
+	host := strings.Split(addr, ":")[0]
+
+	connIn, _, err := resp.(http.Hijacker).Hijack()
+	if err != nil {
 		msg := fmt.Sprintf("Unable to access underlying connection from client: %s", err)
 		respondBadGateway(resp, req, msg)
-	} else {
-		connOut, err := net.Dial("tcp", proxy.addr)
-		if err != nil {
-			msg := fmt.Sprintf("Unable to dial server: %s", err)
-			respondBadGateway(resp, req, msg)
-		} else {
-			pipe(connIn, connOut)
-			connIn.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
-		}
+		return
 	}
-}
-
-// DefaultHandlerFunc is the default handler function for an mitm proxy
-func DefaultHandlerFunc(resp http.ResponseWriter, req *http.Request) {
-	rp := httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			// Transform the URL into an absolute URL including protocol (for downstream proxy)
-			host := hostIncludingPort(req)
-			req.URL.Scheme = "https"
-			req.URL.Host = host
-		},
+	connOut, err := tls.Dial("tcp", addr, &tls.Config{})
+	if err != nil {
+		msg := fmt.Sprintf("Unable to dial server: %s", err)
+		respondBadGateway(resp, req, msg)
+		return
 	}
-	rp.ServeHTTP(resp, req)
+	cert, err := proxy.mitmCertForName(host)
+	if err != nil {
+		msg := fmt.Sprintf("Could not get mitm cert for name: %s\nerror: %s", host, err)
+		respondBadGateway(resp, req, msg)
+		return
+	}
+	tlsConnIn := tls.Server(connIn, &tls.Config{
+		Certificates: []tls.Certificate{*cert},
+	})
+	pipe(tlsConnIn, connOut)
+	connIn.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
 }
 
 func (proxy *Proxy) certificateFor(name string, issuer *keyman.Certificate) (cert *keyman.Certificate, err error) {
