@@ -7,28 +7,29 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
+	"sync"
 	"time"
 
 	"code.google.com/p/go.net/html"
-	"github.com/getlantern/go-mitm/mitm"
 )
 
 const (
 	CONNECT   = "CONNECT"
-	ONE_WEEK  = 7 * 24 * time.Hour
-	TWO_WEEKS = ONE_WEEK * 2
-
-	PK_FILE   = "proxypk.pem"
-	CERT_FILE = "proxycert.pem"
-
 	HTTP_ADDR = "127.0.0.1:8080"
+
+	// The below are defined by package mitm already
+	// ONE_WEEK  = 7 * 24 * time.Hour
+	// TWO_WEEKS = ONE_WEEK * 2
+
+	// PK_FILE   = "proxypk.pem"
+	// CERT_FILE = "proxycert.pem"
 )
 
 var (
-	proxy *mitm.Proxy
+	proxy     *Proxy
+	exampleWg sync.WaitGroup
 )
 
 func init() {
@@ -36,18 +37,19 @@ func init() {
 
 func Example() {
 	var err error
-	proxy, err = mitm.NewProxy(PK_FILE, CERT_FILE)
+	proxy, err = NewProxy(PK_FILE, CERT_FILE)
 	if err != nil {
 		log.Fatalf("Unable to initialize mitm proxy: %s", err)
 	}
-	httpFinished := runHTTPServer()
-	<-httpFinished
+	exampleWg.Add(1)
+	runHTTPServer()
+	// Uncomment the below line to keep the server running
+	//exampleWg.Wait()
+
 	// Output:
 }
 
-func runHTTPServer() (finished chan bool) {
-	finished = make(chan bool)
-
+func runHTTPServer() {
 	server := &http.Server{
 		Addr:         HTTP_ADDR,
 		Handler:      http.HandlerFunc(handleRequest),
@@ -60,7 +62,7 @@ func runHTTPServer() (finished chan bool) {
 		if err := server.ListenAndServe(); err != nil {
 			log.Fatalf("Unable to start HTTP proxy: %s", err)
 		}
-		finished <- true
+		exampleWg.Done()
 	}()
 
 	return
@@ -99,18 +101,19 @@ func addProxyingInfo(body io.Reader, out io.Writer) {
 	}
 }
 
-func respondBadGateway(resp http.ResponseWriter, req *http.Request, msg string) {
-	resp.WriteHeader(502)
-	resp.Write([]byte(fmt.Sprintf("Bad Gateway: %s - %s", req.URL, msg)))
-}
+// The below are defined by package mitm already
+// func respondBadGateway(resp http.ResponseWriter, req *http.Request, msg string) {
+// 	resp.WriteHeader(502)
+// 	resp.Write([]byte(fmt.Sprintf("Bad Gateway: %s - %s", req.URL, msg)))
+// }
 
-func pipe(connIn net.Conn, connOut net.Conn) {
-	go func() {
-		defer connIn.Close()
-		io.Copy(connOut, connIn)
-	}()
-	go func() {
-		defer connOut.Close()
-		io.Copy(connIn, connOut)
-	}()
-}
+// func pipe(connIn net.Conn, connOut net.Conn) {
+// 	go func() {
+// 		defer connIn.Close()
+// 		io.Copy(connOut, connIn)
+// 	}()
+// 	go func() {
+// 		defer connOut.Close()
+// 		io.Copy(connIn, connOut)
+// 	}()
+// }
