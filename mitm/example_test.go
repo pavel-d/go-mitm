@@ -84,23 +84,6 @@ func reverseProxy(resp http.ResponseWriter, req *http.Request) {
 	rp.ServeHTTP(resp, req)
 }
 
-func addProxyingInfo(body io.Reader, out io.Writer) {
-	z := html.NewTokenizer(body)
-	lookingForBody := true
-	for lookingForBody == true {
-		tt := z.Next()
-		fmt.Println(tt.String())
-		if tt == html.ErrorToken {
-			return
-		}
-		if tt == html.StartTagToken {
-			out.Write([]byte("<div style='background-color: red; font-weight: bold; height: 30px;'><a href='javascript:void(0);'>Click Here to Proxy with Lantern</a>"))
-			lookingForBody = false
-		}
-		out.Write([]byte(z.Token().String()))
-	}
-}
-
 // The below are defined by package mitm already
 // func respondBadGateway(resp http.ResponseWriter, req *http.Request, msg string) {
 // 	resp.WriteHeader(502)
@@ -117,3 +100,5 @@ func addProxyingInfo(body io.Reader, out io.Writer) {
 // 		io.Copy(connIn, connOut)
 // 	}()
 // }
+
+func unused() {}
