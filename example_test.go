@@ -1,7 +1,7 @@
 // This example shows a proxy server that uses go-mitm to man-in-the-middle
 // HTTPS connections opened with CONNECT requests
 
-package mitm
+package main
 
 import (
 	"fmt"
@@ -42,6 +42,7 @@ func Example() {
 	}
 	httpFinished := runHTTPServer()
 	<-httpFinished
+	// Output:
 }
 
 func runHTTPServer() (finished chan bool) {
