@@ -103,7 +103,7 @@ func (proxy *Proxy) Intercept(resp http.ResponseWriter, req *http.Request) {
 // Intercept intercepts the given request and starts mitm'ing it, handling the
 // connection using the supplied handle function (which is responsible for
 // dialing out and )
-func (proxy *Proxy) InterceptWith(resp http.ResponseWriter, req *http.Request, handler func(net.Conn, string)) {
+func (proxy *Proxy) InterceptWith(resp http.ResponseWriter, req *http.Request, handleFn func(net.Conn, string)) {
 	addr := hostIncludingPort(req)
 	host := strings.Split(addr, ":")[0]
 
@@ -122,7 +122,7 @@ func (proxy *Proxy) InterceptWith(resp http.ResponseWriter, req *http.Request, h
 	tlsConnIn := tls.Server(connIn, &tls.Config{
 		Certificates: []tls.Certificate{*cert},
 	})
-	handle(tlsConnIn, addr)
+	handleFn(tlsConnIn, addr)
 	connIn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 }
 
