@@ -94,34 +94,36 @@ func (proxy *Proxy) mitmCertForName(name string) (cert *tls.Certificate, err err
 	return &keyPair, nil
 }
 
-// Intercept intercepts the given request and starts mitm'ing it
+// Intercept intercepts the given request and starts mitm'ing it, piping data
+// between the input and output using io.Copy.
 func (proxy *Proxy) Intercept(resp http.ResponseWriter, req *http.Request) {
+	proxy.InterceptWith(resp, req, handle)
+}
+
+// Intercept intercepts the given request and starts mitm'ing it, handling the
+// connection using the supplied handle function (which is responsible for
+// dialing out and )
+func (proxy *Proxy) InterceptWith(resp http.ResponseWriter, req *http.Request, handler func(net.Conn, string)) {
 	addr := hostIncludingPort(req)
 	host := strings.Split(addr, ":")[0]
 
 	connIn, _, err := resp.(http.Hijacker).Hijack()
 	if err != nil {
 		msg := fmt.Sprintf("Unable to access underlying connection from client: %s", err)
-		respondBadGateway(resp, req, msg)
-		return
-	}
-	connOut, err := tls.Dial("tcp", addr, &tls.Config{})
-	if err != nil {
-		msg := fmt.Sprintf("Unable to dial server: %s", err)
-		respondBadGateway(resp, req, msg)
+		respondBadGateway(connIn, msg)
 		return
 	}
 	cert, err := proxy.mitmCertForName(host)
 	if err != nil {
 		msg := fmt.Sprintf("Could not get mitm cert for name: %s\nerror: %s", host, err)
-		respondBadGateway(resp, req, msg)
+		respondBadGateway(connIn, msg)
 		return
 	}
 	tlsConnIn := tls.Server(connIn, &tls.Config{
 		Certificates: []tls.Certificate{*cert},
 	})
-	pipe(tlsConnIn, connOut)
-	connIn.Write([]byte("HTTP/1.0 200 OK\r\n\r\n"))
+	handle(tlsConnIn, addr)
+	connIn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 }
 
 func (proxy *Proxy) certificateFor(name string, issuer *keyman.Certificate) (cert *keyman.Certificate, err error) {
@@ -155,9 +157,19 @@ func hostIncludingPort(req *http.Request) (host string) {
 	return
 }
 
-func respondBadGateway(resp http.ResponseWriter, req *http.Request, msg string) {
-	resp.WriteHeader(502)
-	resp.Write([]byte(fmt.Sprintf("Bad Gateway: %s - %s", req.URL, msg)))
+func respondBadGateway(connIn net.Conn, msg string) {
+	connIn.Write([]byte(fmt.Sprintf("HTTP/1.1 502 Bad Gateway: %s", msg)))
+	connIn.Close()
+}
+
+func handle(connIn net.Conn, addr string) {
+	connOut, err := tls.Dial("tcp", addr, &tls.Config{})
+	if err != nil {
+		msg := fmt.Sprintf("Unable to dial server: %s", err)
+		respondBadGateway(connIn, msg)
+		return
+	}
+	pipe(connIn, connOut)
 }
 
 func pipe(connIn net.Conn, connOut net.Conn) {

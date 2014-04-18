@@ -4,15 +4,17 @@
 package mitm
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"sync"
 	"time"
 
-	"code.google.com/p/go.net/html"
+	"github.com/davecgh/go-spew/spew"
 )
 
 const (
@@ -41,6 +43,7 @@ func Example() {
 	if err != nil {
 		log.Fatalf("Unable to initialize mitm proxy: %s", err)
 	}
+
 	exampleWg.Add(1)
 	runHTTPServer()
 	// Uncomment the below line to keep the server running
@@ -70,7 +73,7 @@ func runHTTPServer() {
 
 func handleRequest(resp http.ResponseWriter, req *http.Request) {
 	if req.Method == CONNECT {
-		proxy.Intercept(resp, req)
+		proxy.InterceptWith(resp, req, logRequestAndPipe)
 	} else {
 		reverseProxy(resp, req)
 	}
@@ -82,6 +85,39 @@ func reverseProxy(resp http.ResponseWriter, req *http.Request) {
 		},
 	}
 	rp.ServeHTTP(resp, req)
+}
+
+func logRequestAndPipe(connIn net.Conn, addr string) {
+	connOut, err := tls.Dial("tcp", addr, &tls.Config{})
+	if err != nil {
+		msg := fmt.Sprintf("Unable to dial server: %s", err)
+		respondBadGateway(connIn, msg)
+		return
+	}
+
+	serverConn := httputil.NewServerConn(connIn, nil)
+	go func() {
+		// Read each request
+		for {
+			req, err := serverConn.Read()
+			if err != nil {
+				if err != io.EOF {
+					msg := fmt.Sprintf("Unable to read request: %s", err)
+					connOut.Close()
+					respondBadGateway(connIn, msg)
+				}
+				return
+			}
+
+			log.Println(spew.Sdump(req))
+
+			// Write out the request
+			req.Write(connOut)
+
+			// Pipe data
+			pipe(connIn, connOut)
+		}
+	}()
 }
 
 // The below are defined by package mitm already
