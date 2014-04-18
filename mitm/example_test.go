@@ -32,9 +32,15 @@ const (
 var (
 	proxy     *Proxy
 	exampleWg sync.WaitGroup
+
+	rp = httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+		},
+	}
 )
 
 func init() {
+
 }
 
 func Example() {
@@ -80,10 +86,6 @@ func handleRequest(resp http.ResponseWriter, req *http.Request) {
 }
 
 func reverseProxy(resp http.ResponseWriter, req *http.Request) {
-	rp := httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-		},
-	}
 	rp.ServeHTTP(resp, req)
 }
 
