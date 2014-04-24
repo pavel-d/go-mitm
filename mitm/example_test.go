@@ -9,8 +9,6 @@ import (
 	"net/http/httputil"
 	"sync"
 	"time"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 const (
@@ -49,7 +47,7 @@ func runHTTPServer() {
 
 	rp := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
-			log.Println(spew.Sdump(req))
+			log.Printf("Processing request to: %s", req.URL)
 		},
 	}
 

@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -81,15 +82,15 @@ func (wrapper *HandlerWrapper) intercept(resp http.ResponseWriter, req *http.Req
 	handler := http.HandlerFunc(func(resp2 http.ResponseWriter, req2 *http.Request) {
 		// Fix up the request URL
 		req2.URL.Scheme = "https"
-		req2.URL.Host = addr
+		req2.URL.Host = req2.Host
 		wrapper.wrapped.ServeHTTP(resp2, req2)
 	})
-	err = http.Serve(listener, handler)
-	if err != nil {
-		msg := fmt.Sprintf("Unable to serve mitm'ed connection: %s", err)
-		connBadGateway(connIn, msg)
-		return
-	}
+	go func() {
+		err = http.Serve(listener, handler)
+		if err != nil && err != io.EOF {
+			log.Printf("Error serving mitm'ed connection: %s", err)
+		}
+	}()
 	connIn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 }
 
@@ -102,11 +103,13 @@ func hostIncludingPort(req *http.Request) (host string) {
 }
 
 func respBadGateway(resp http.ResponseWriter, msg string) {
+	log.Println(msg)
 	resp.WriteHeader(502)
 	resp.Write([]byte(msg))
 }
 
 func connBadGateway(connIn net.Conn, msg string) {
+	log.Println(msg)
 	connIn.Write([]byte(fmt.Sprintf("HTTP/1.1 502 Bad Gateway: %s", msg)))
 	connIn.Close()
 }
