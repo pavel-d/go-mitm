@@ -4,40 +4,24 @@ package mitm
 
 import (
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"fmt"
-	"github.com/oxtoacart/keyman"
 	"io"
-	"math/big"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
-	"time"
+
+	"github.com/oxtoacart/keyman"
 )
 
 const (
-	ONE_WEEK  = 7 * 24 * time.Hour
-	TWO_WEEKS = ONE_WEEK * 2
-
-	PK_FILE   = "proxypk.pem"
-	CERT_FILE = "proxycert.pem"
+	CONNECT = "CONNECT"
 )
 
-type Proxy struct {
-	// PKFile: the PEM-encoded file to use as the primary key for this server
-	PKFile string
-
-	// CertFile: the PEM-encoded X509 certificate to use for this server (must match PKFile)
-	CertFile string
-
-	// Organization: Name of the organization to use on the generated CA cert for this proxy
-	Organization string
-
-	// CommonName: CommonName to use on the generated CA cert for this proxy
-	CommonName string
-
+// HandlerWrapper wraps a Handler with MITM'ing functionality
+type HandlerWrapper struct {
+	cryptoConf     *CryptoConfig
+	wrapped        http.Handler
 	pk             *keyman.PrivateKey
 	pkPem          []byte
 	issuingCert    *keyman.Certificate
@@ -46,107 +30,67 @@ type Proxy struct {
 	certMutex      sync.Mutex
 }
 
-// NewProxy creates a new Proxy using primary key and certificate at the
-// specified paths.  If no primary key and/or certificate can be found at the
-// given paths, they will be automatically generated.
-func NewProxy(pkFile string, certFile string) (proxy *Proxy, err error) {
-	proxy = &Proxy{
-		PKFile:       pkFile,
-		CertFile:     certFile,
-		Organization: "gomitm",
+// Wrap creates an http.Handler that wraps the provided handler and MITM's
+// CONNECT requests, using the given CryptoConfig.  The primary key and
+// certificate used to generate and sign MITM certificates are auto-created if
+// not already present.
+func Wrap(handler http.Handler, cryptoConf *CryptoConfig) (*HandlerWrapper, error) {
+	wrapper := &HandlerWrapper{
+		cryptoConf:   cryptoConf,
+		wrapped:      handler,
 		dynamicCerts: make(map[string]*tls.Certificate),
 	}
-	if proxy.pk, err = keyman.LoadPKFromFile(pkFile); err != nil {
-		proxy.pk, err = keyman.GeneratePK(2048)
-		if err != nil {
-			return nil, fmt.Errorf("Unable to generate private key: %s", err)
-		}
-		proxy.pk.WriteToFile(PK_FILE)
-	}
-	proxy.pkPem = proxy.pk.PEMEncoded()
-	if proxy.issuingCert, err = keyman.LoadCertificateFromFile(certFile); err != nil {
-		proxy.issuingCert, err = proxy.certificateFor("Lantern", nil)
-		if err != nil {
-			return nil, fmt.Errorf("Unable to generate self-signed issuing certificate: %s", err)
-		}
-		proxy.issuingCert.WriteToFile(CERT_FILE)
-	}
-	proxy.issuingCertPem = proxy.issuingCert.PEMEncoded()
-	return
-}
-
-func (proxy *Proxy) mitmCertForName(name string) (cert *tls.Certificate, err error) {
-	proxy.certMutex.Lock()
-	defer proxy.certMutex.Unlock()
-	kpCandidate, found := proxy.dynamicCerts[name]
-	if found {
-		return kpCandidate, nil
-	}
-	generatedCert, err := proxy.certificateFor(name, proxy.issuingCert)
+	err := wrapper.initCrypto()
 	if err != nil {
-		return nil, fmt.Errorf("Unable to issue certificate: %s", err)
+		return nil, err
 	}
-	keyPair, err := tls.X509KeyPair(generatedCert.PEMEncoded(), proxy.pkPem)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to parse keypair for tls: %s", err)
-	}
-	proxy.dynamicCerts[name] = &keyPair
-	return &keyPair, nil
+	return wrapper, nil
 }
 
-// Intercept intercepts the given request and starts mitm'ing it, piping data
-// between the input and output using io.Copy.
-func (proxy *Proxy) Intercept(resp http.ResponseWriter, req *http.Request) {
-	proxy.InterceptWith(resp, req, handle)
+// ServeHTTP implements ServeHTTP from http.Handler
+func (wrapper *HandlerWrapper) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
+	if req.Method == CONNECT {
+		wrapper.intercept(resp, req)
+	} else {
+		wrapper.wrapped.ServeHTTP(resp, req)
+	}
 }
 
-// Intercept intercepts the given request and starts mitm'ing it, handling the
-// connection using the supplied handle function (which is responsible for
-// dialing out and )
-func (proxy *Proxy) InterceptWith(resp http.ResponseWriter, req *http.Request, handleFn func(net.Conn, string)) {
+func (wrapper *HandlerWrapper) intercept(resp http.ResponseWriter, req *http.Request) {
 	addr := hostIncludingPort(req)
 	host := strings.Split(addr, ":")[0]
+
+	cert, err := wrapper.mitmCertForName(host)
+	if err != nil {
+		msg := fmt.Sprintf("Could not get mitm cert for name: %s\nerror: %s", host, err)
+		respBadGateway(resp, msg)
+		return
+	}
 
 	connIn, _, err := resp.(http.Hijacker).Hijack()
 	if err != nil {
 		msg := fmt.Sprintf("Unable to access underlying connection from client: %s", err)
-		respondBadGateway(connIn, msg)
-		return
-	}
-	cert, err := proxy.mitmCertForName(host)
-	if err != nil {
-		msg := fmt.Sprintf("Could not get mitm cert for name: %s\nerror: %s", host, err)
-		respondBadGateway(connIn, msg)
+		respBadGateway(resp, msg)
 		return
 	}
 	tlsConnIn := tls.Server(connIn, &tls.Config{
 		Certificates: []tls.Certificate{*cert},
 	})
-	handleFn(tlsConnIn, addr)
+
+	listener := &mitmListener{tlsConnIn}
+	handler := http.HandlerFunc(func(resp2 http.ResponseWriter, req2 *http.Request) {
+		// Fix up the request URL
+		req2.URL.Scheme = "https"
+		req2.URL.Host = addr
+		wrapper.wrapped.ServeHTTP(resp2, req2)
+	})
+	err = http.Serve(listener, handler)
+	if err != nil {
+		msg := fmt.Sprintf("Unable to serve mitm'ed connection: %s", err)
+		connBadGateway(connIn, msg)
+		return
+	}
 	connIn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-}
-
-func (proxy *Proxy) certificateFor(name string, issuer *keyman.Certificate) (cert *keyman.Certificate, err error) {
-	now := time.Now()
-	template := &x509.Certificate{
-		SerialNumber: new(big.Int).SetInt64(int64(time.Now().Nanosecond())),
-		Subject: pkix.Name{
-			Organization: []string{proxy.Organization},
-			CommonName:   name,
-		},
-		NotBefore: now.Add(-1 * ONE_WEEK),
-		NotAfter:  now.Add(TWO_WEEKS),
-
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-	}
-	if issuer == nil {
-		template.KeyUsage = template.KeyUsage | x509.KeyUsageCertSign
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
-		template.IsCA = true
-	}
-	cert, err = proxy.pk.Certificate(template, issuer)
-	return
 }
 
 func hostIncludingPort(req *http.Request) (host string) {
@@ -157,19 +101,14 @@ func hostIncludingPort(req *http.Request) (host string) {
 	return
 }
 
-func respondBadGateway(connIn net.Conn, msg string) {
-	connIn.Write([]byte(fmt.Sprintf("HTTP/1.1 502 Bad Gateway: %s", msg)))
-	connIn.Close()
+func respBadGateway(resp http.ResponseWriter, msg string) {
+	resp.WriteHeader(502)
+	resp.Write([]byte(msg))
 }
 
-func handle(connIn net.Conn, addr string) {
-	connOut, err := tls.Dial("tcp", addr, &tls.Config{})
-	if err != nil {
-		msg := fmt.Sprintf("Unable to dial server: %s", err)
-		respondBadGateway(connIn, msg)
-		return
-	}
-	pipe(connIn, connOut)
+func connBadGateway(connIn net.Conn, msg string) {
+	connIn.Write([]byte(fmt.Sprintf("HTTP/1.1 502 Bad Gateway: %s", msg)))
+	connIn.Close()
 }
 
 func pipe(connIn net.Conn, connOut net.Conn) {
