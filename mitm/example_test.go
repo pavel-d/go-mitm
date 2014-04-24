@@ -34,7 +34,7 @@ func Example() {
 	exampleWg.Add(1)
 	runHTTPServer()
 	// Uncomment the below line to keep the server running
-	exampleWg.Wait()
+	//exampleWg.Wait()
 
 	// Output:
 }
