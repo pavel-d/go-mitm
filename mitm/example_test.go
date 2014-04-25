@@ -4,6 +4,7 @@
 package mitm
 
 import (
+	"crypto/tls"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -12,14 +13,8 @@ import (
 )
 
 const (
-	HTTP_ADDR = "127.0.0.1:8080"
-
-	// The below are defined by package mitm already
-	// ONE_WEEK  = 7 * 24 * time.Hour
-	// TWO_WEEKS = ONE_WEEK * 2
-
-	// PK_FILE   = "proxypk.pem"
-	// CERT_FILE = "proxycert.pem"
+	HTTP_ADDR         = "127.0.0.1:8080"
+	SESSIONS_TO_CACHE = 10000
 )
 
 var (
@@ -34,7 +29,7 @@ func Example() {
 	exampleWg.Add(1)
 	runHTTPServer()
 	// Uncomment the below line to keep the server running
-	//exampleWg.Wait()
+	// exampleWg.Wait()
 
 	// Output:
 }
@@ -48,6 +43,13 @@ func runHTTPServer() {
 	rp := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			log.Printf("Processing request to: %s", req.URL)
+		},
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				// Use a TLS session cache to minimize TLS connection establishment
+				// Requires Go 1.3+
+				ClientSessionCache: tls.NewLRUClientSessionCache(SESSIONS_TO_CACHE),
+			},
 		},
 	}
 
