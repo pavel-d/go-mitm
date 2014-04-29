@@ -8,7 +8,7 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/oxtoacart/keyman"
+	"github.com/getlantern/keyman"
 )
 
 const (

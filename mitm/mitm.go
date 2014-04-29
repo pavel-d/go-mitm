@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/oxtoacart/keyman"
+	"github.com/getlantern/keyman"
 )
 
 const (
