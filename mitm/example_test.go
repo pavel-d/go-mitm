@@ -61,8 +61,8 @@ func runHTTPServer() {
 	server := &http.Server{
 		Addr:         HTTP_ADDR,
 		Handler:      handler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  10 * time.Hour,
+		WriteTimeout: 10 * time.Hour,
 	}
 
 	go func() {
