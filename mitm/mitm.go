@@ -21,14 +21,15 @@ const (
 
 // HandlerWrapper wraps a Handler with MITM'ing functionality
 type HandlerWrapper struct {
-	cryptoConf     *CryptoConfig
-	wrapped        http.Handler
-	pk             *keyman.PrivateKey
-	pkPem          []byte
-	issuingCert    *keyman.Certificate
-	issuingCertPem []byte
-	dynamicCerts   map[string]*tls.Certificate
-	certMutex      sync.Mutex
+	cryptoConf      *CryptoConfig
+	wrapped         http.Handler
+	pk              *keyman.PrivateKey
+	pkPem           []byte
+	issuingCert     *keyman.Certificate
+	issuingCertPem  []byte
+	dynamicCerts    map[string]*tls.Certificate
+	serverTLSConfig *tls.Config
+	certMutex       sync.Mutex
 }
 
 // Wrap creates an http.Handler that wraps the provided handler and MITM's
@@ -74,9 +75,15 @@ func (wrapper *HandlerWrapper) intercept(resp http.ResponseWriter, req *http.Req
 		respBadGateway(resp, msg)
 		return
 	}
-	tlsConnIn := tls.Server(connIn, &tls.Config{
-		Certificates: []tls.Certificate{*cert},
-	})
+	var tlsConfig *tls.Config
+	if wrapper.cryptoConf.ServerTLSConfig != nil {
+		// Make a copy of the provided tls.Config
+		tlsConfig = &(*wrapper.cryptoConf.ServerTLSConfig)
+	} else {
+		tlsConfig = &tls.Config{}
+	}
+	tlsConfig.Certificates = []tls.Certificate{*cert}
+	tlsConnIn := tls.Server(connIn, tlsConfig)
 
 	listener := &mitmListener{tlsConnIn}
 	handler := http.HandlerFunc(func(resp2 http.ResponseWriter, req2 *http.Request) {

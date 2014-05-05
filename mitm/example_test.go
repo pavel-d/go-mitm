@@ -29,7 +29,7 @@ func Example() {
 	exampleWg.Add(1)
 	runHTTPServer()
 	// Uncomment the below line to keep the server running
-	// exampleWg.Wait()
+	//exampleWg.Wait()
 
 	// Output:
 }
@@ -38,6 +38,21 @@ func runHTTPServer() {
 	cryptoConfig := &CryptoConfig{
 		PKFile:   "proxypk.pem",
 		CertFile: "proxycert.pem",
+		ServerTLSConfig: &tls.Config{
+			CipherSuites: []uint16{
+				tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+				tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA,
+				tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
+				tls.TLS_RSA_WITH_RC4_128_SHA,
+				tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA,
+				tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+				tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			},
+			PreferServerCipherSuites: true,
+		},
 	}
 
 	rp := &httputil.ReverseProxy{

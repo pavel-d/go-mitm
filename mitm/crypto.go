@@ -29,6 +29,9 @@ type CryptoConfig struct {
 
 	// CommonName: CommonName to use on the generated CA cert for this proxy (defaults to "Lantern")
 	CommonName string
+
+	// ServerTLSConfig: configuration for TLS server when MITMing (if nil, a sensible default is used)
+	ServerTLSConfig *tls.Config
 }
 
 func (wrapper *HandlerWrapper) initCrypto() (err error) {
