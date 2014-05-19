@@ -1,4 +1,5 @@
-## go-mitm
+go-mitm [![Travis CI Status](https://travis-ci.org/getlantern/go-mitm.svg?branch=master)](https://travis-ci.org/getlantern/go-mitm)&nbsp;[![GoDoc](https://godoc.org/github.com/getlantern/go-mitm/mitm?status.png)](http://godoc.org/github.com/getlantern/go-mitm/mitm)
+======
 
 go-mitm is a Go library that makes it easy to add MITM (Man in the Middle) capabilities to any Go-based HTTPS server, in particular intended for web proxies.
 
