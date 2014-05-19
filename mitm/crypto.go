@@ -2,10 +2,7 @@ package mitm
 
 import (
 	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/getlantern/keyman"
@@ -61,26 +58,7 @@ func (wrapper *HandlerWrapper) initCrypto() (err error) {
 }
 
 func (wrapper *HandlerWrapper) certificateFor(name string, issuer *keyman.Certificate) (cert *keyman.Certificate, err error) {
-	now := time.Now()
-	template := &x509.Certificate{
-		SerialNumber: new(big.Int).SetInt64(int64(time.Now().Nanosecond())),
-		Subject: pkix.Name{
-			Organization: []string{wrapper.cryptoConf.Organization},
-			CommonName:   name,
-		},
-		NotBefore: now.Add(-1 * ONE_WEEK),
-		NotAfter:  now.Add(TWO_WEEKS),
-
-		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
-	}
-	if issuer == nil {
-		template.KeyUsage = template.KeyUsage | x509.KeyUsageCertSign
-		template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
-		template.IsCA = true
-	}
-	cert, err = wrapper.pk.Certificate(template, issuer)
-	return
+	return wrapper.pk.TLSCertificateFor(wrapper.cryptoConf.Organization, name, TWO_WEEKS, nil)
 }
 
 func (wrapper *HandlerWrapper) mitmCertForName(name string) (cert *tls.Certificate, err error) {
