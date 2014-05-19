@@ -47,7 +47,7 @@ func (wrapper *HandlerWrapper) initCrypto() (err error) {
 	}
 	wrapper.pkPem = wrapper.pk.PEMEncoded()
 	if wrapper.issuingCert, err = keyman.LoadCertificateFromFile(wrapper.cryptoConf.CertFile); err != nil {
-		wrapper.issuingCert, err = wrapper.certificateFor("Lantern", nil)
+		wrapper.issuingCert, err = wrapper.certificateFor("Lantern", true, nil)
 		if err != nil {
 			return fmt.Errorf("Unable to generate self-signed issuing certificate: %s", err)
 		}
@@ -57,12 +57,13 @@ func (wrapper *HandlerWrapper) initCrypto() (err error) {
 	return
 }
 
-func (wrapper *HandlerWrapper) certificateFor(name string, issuer *keyman.Certificate) (cert *keyman.Certificate, err error) {
+func (wrapper *HandlerWrapper) certificateFor(name string, isCA bool, issuer *keyman.Certificate) (cert *keyman.Certificate, err error) {
 	return wrapper.pk.TLSCertificateFor(
 		wrapper.cryptoConf.Organization,
 		name,
 		time.Now().Add(TWO_WEEKS),
-		nil)
+		isCA,
+		issuer)
 }
 
 func (wrapper *HandlerWrapper) mitmCertForName(name string) (cert *tls.Certificate, err error) {
@@ -72,7 +73,7 @@ func (wrapper *HandlerWrapper) mitmCertForName(name string) (cert *tls.Certifica
 	if found {
 		return kpCandidate, nil
 	}
-	generatedCert, err := wrapper.certificateFor(name, wrapper.issuingCert)
+	generatedCert, err := wrapper.certificateFor(name, false, wrapper.issuingCert)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to issue certificate: %s", err)
 	}
