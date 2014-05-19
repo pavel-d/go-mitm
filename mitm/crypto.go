@@ -58,7 +58,11 @@ func (wrapper *HandlerWrapper) initCrypto() (err error) {
 }
 
 func (wrapper *HandlerWrapper) certificateFor(name string, issuer *keyman.Certificate) (cert *keyman.Certificate, err error) {
-	return wrapper.pk.TLSCertificateFor(wrapper.cryptoConf.Organization, name, TWO_WEEKS, nil)
+	return wrapper.pk.TLSCertificateFor(
+		wrapper.cryptoConf.Organization,
+		name,
+		time.Now().Add(TWO_WEEKS),
+		nil)
 }
 
 func (wrapper *HandlerWrapper) mitmCertForName(name string) (cert *tls.Certificate, err error) {
