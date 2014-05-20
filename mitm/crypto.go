@@ -9,8 +9,10 @@ import (
 )
 
 const (
-	ONE_WEEK  = 7 * 24 * time.Hour
-	TWO_WEEKS = ONE_WEEK * 2
+	ONE_DAY   = 1
+	TWO_WEEKS = ONE_DAY * 14
+	ONE_MONTH = 1
+	ONE_YEAR  = 1
 )
 
 // CryptoConfig configures the cryptography settings for an MITMer
@@ -27,7 +29,7 @@ type CryptoConfig struct {
 	// CommonName: CommonName to use on the generated CA cert for this proxy (defaults to "Lantern")
 	CommonName string
 
-	// ServerTLSConfig: configuration for TLS server when MITMing (if nil, a sensible default is used)
+	// ServerTLSConfig: optional configuration for TLS server when MITMing (if nil, a sensible default is used)
 	ServerTLSConfig *tls.Config
 }
 
@@ -46,8 +48,14 @@ func (wrapper *HandlerWrapper) initCrypto() (err error) {
 		wrapper.pk.WriteToFile(wrapper.cryptoConf.PKFile)
 	}
 	wrapper.pkPem = wrapper.pk.PEMEncoded()
-	if wrapper.issuingCert, err = keyman.LoadCertificateFromFile(wrapper.cryptoConf.CertFile); err != nil {
-		wrapper.issuingCert, err = wrapper.certificateFor("Lantern", true, nil)
+	wrapper.issuingCert, err = keyman.LoadCertificateFromFile(wrapper.cryptoConf.CertFile)
+	if err != nil || wrapper.issuingCert.ExpiresBefore(time.Now().AddDate(0, ONE_MONTH, 0)) {
+		wrapper.issuingCert, err = wrapper.pk.TLSCertificateFor(
+			wrapper.cryptoConf.Organization,
+			wrapper.cryptoConf.CommonName,
+			time.Now().AddDate(ONE_YEAR, 0, 0),
+			true,
+			nil)
 		if err != nil {
 			return fmt.Errorf("Unable to generate self-signed issuing certificate: %s", err)
 		}
@@ -57,23 +65,21 @@ func (wrapper *HandlerWrapper) initCrypto() (err error) {
 	return
 }
 
-func (wrapper *HandlerWrapper) certificateFor(name string, isCA bool, issuer *keyman.Certificate) (cert *keyman.Certificate, err error) {
-	return wrapper.pk.TLSCertificateFor(
-		wrapper.cryptoConf.Organization,
-		name,
-		time.Now().Add(TWO_WEEKS),
-		isCA,
-		issuer)
-}
-
 func (wrapper *HandlerWrapper) mitmCertForName(name string) (cert *tls.Certificate, err error) {
 	wrapper.certMutex.Lock()
 	defer wrapper.certMutex.Unlock()
+
 	kpCandidate, found := wrapper.dynamicCerts[name]
 	if found {
 		return kpCandidate, nil
 	}
-	generatedCert, err := wrapper.certificateFor(name, false, wrapper.issuingCert)
+
+	generatedCert, err := wrapper.pk.TLSCertificateFor(
+		wrapper.cryptoConf.Organization,
+		name,
+		time.Now().AddDate(0, 0, TWO_WEEKS),
+		false,
+		wrapper.issuingCert)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to issue certificate: %s", err)
 	}

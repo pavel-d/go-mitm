@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -19,7 +18,7 @@ const (
 	CONNECT = "CONNECT"
 )
 
-// HandlerWrapper wraps a Handler with MITM'ing functionality
+// HandlerWrapper wraps an http.Handler with MITM'ing functionality
 type HandlerWrapper struct {
 	cryptoConf      *CryptoConfig
 	wrapped         http.Handler
@@ -27,8 +26,8 @@ type HandlerWrapper struct {
 	pkPem           []byte
 	issuingCert     *keyman.Certificate
 	issuingCertPem  []byte
-	dynamicCerts    map[string]*tls.Certificate
 	serverTLSConfig *tls.Config
+	dynamicCerts    map[string]*tls.Certificate
 	certMutex       sync.Mutex
 }
 
@@ -80,12 +79,10 @@ func (wrapper *HandlerWrapper) intercept(resp http.ResponseWriter, req *http.Req
 		respBadGateway(resp, msg)
 		return
 	}
-	var tlsConfig *tls.Config
+	tlsConfig := &tls.Config{}
 	if wrapper.cryptoConf.ServerTLSConfig != nil {
-		// Make a copy of the provided tls.Config
-		tlsConfig = &(*wrapper.cryptoConf.ServerTLSConfig)
-	} else {
-		tlsConfig = &tls.Config{}
+		// Copy the provided tlsConfig
+		*tlsConfig = *wrapper.cryptoConf.ServerTLSConfig
 	}
 	// Upgrade to a TLS connection that presents our dynamically generated cert
 	// for the HOST
@@ -98,7 +95,8 @@ func (wrapper *HandlerWrapper) intercept(resp http.ResponseWriter, req *http.Req
 	// This Handler just fixes up the request URL to have the right protocol and
 	// host and then delegates to the wrapped Handler.
 	handler := http.HandlerFunc(func(resp2 http.ResponseWriter, req2 *http.Request) {
-		// Fix up the request URL
+		// Fix up the request URL to make it look as it would have if the client
+		// thought it were talking to a proxy at this point.
 		req2.URL.Scheme = "https"
 		req2.URL.Host = req2.Host
 		wrapper.wrapped.ServeHTTP(resp2, req2)
@@ -131,21 +129,4 @@ func respBadGateway(resp http.ResponseWriter, msg string) {
 	log.Println(msg)
 	resp.WriteHeader(502)
 	resp.Write([]byte(msg))
-}
-
-func connBadGateway(connIn net.Conn, msg string) {
-	log.Println(msg)
-	connIn.Write([]byte(fmt.Sprintf("HTTP/1.1 502 Bad Gateway: %s", msg)))
-	connIn.Close()
-}
-
-func pipe(connIn net.Conn, connOut net.Conn) {
-	go func() {
-		defer connIn.Close()
-		io.Copy(connOut, connIn)
-	}()
-	go func() {
-		defer connOut.Close()
-		io.Copy(connIn, connOut)
-	}()
 }
