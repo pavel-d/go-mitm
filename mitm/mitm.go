@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/getlantern/go-cache/cache"
 	"github.com/getlantern/keyman"
 )
 
@@ -27,7 +28,7 @@ type HandlerWrapper struct {
 	issuingCert     *keyman.Certificate
 	issuingCertPem  []byte
 	serverTLSConfig *tls.Config
-	dynamicCerts    map[string]*tls.Certificate
+	dynamicCerts    *cache.Cache
 	certMutex       sync.Mutex
 }
 
@@ -39,7 +40,7 @@ func Wrap(handler http.Handler, cryptoConf *CryptoConfig) (*HandlerWrapper, erro
 	wrapper := &HandlerWrapper{
 		cryptoConf:   cryptoConf,
 		wrapped:      handler,
-		dynamicCerts: make(map[string]*tls.Certificate),
+		dynamicCerts: cache.NewCache(),
 	}
 	err := wrapper.initCrypto()
 	if err != nil {

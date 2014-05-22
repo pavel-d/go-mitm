@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	ONE_DAY   = 1
+	ONE_DAY   = 24 * time.Hour
 	TWO_WEEKS = ONE_DAY * 14
 	ONE_MONTH = 1
 	ONE_YEAR  = 1
@@ -66,18 +66,26 @@ func (wrapper *HandlerWrapper) initCrypto() (err error) {
 }
 
 func (wrapper *HandlerWrapper) mitmCertForName(name string) (cert *tls.Certificate, err error) {
-	wrapper.certMutex.Lock()
-	defer wrapper.certMutex.Unlock()
-
-	kpCandidate, found := wrapper.dynamicCerts[name]
+	// Try to read an existing cert
+	kpCandidateIf, found := wrapper.dynamicCerts.Get(name)
 	if found {
-		return kpCandidate, nil
+		return kpCandidateIf.(*tls.Certificate), nil
 	}
 
+	// Existing cert not found, lock for writing and recheck
+	wrapper.certMutex.Lock()
+	defer wrapper.certMutex.Unlock()
+	kpCandidateIf, found = wrapper.dynamicCerts.Get(name)
+	if found {
+		return kpCandidateIf.(*tls.Certificate), nil
+	}
+
+	// Still not found, create certificate
+	certTTL := TWO_WEEKS
 	generatedCert, err := wrapper.pk.TLSCertificateFor(
 		wrapper.cryptoConf.Organization,
 		name,
-		time.Now().AddDate(0, 0, TWO_WEEKS),
+		time.Now().Add(certTTL),
 		false,
 		wrapper.issuingCert)
 	if err != nil {
@@ -87,6 +95,9 @@ func (wrapper *HandlerWrapper) mitmCertForName(name string) (cert *tls.Certifica
 	if err != nil {
 		return nil, fmt.Errorf("Unable to parse keypair for tls: %s", err)
 	}
-	wrapper.dynamicCerts[name] = &keyPair
+
+	// Add to cache, set to expire 1 day before the cert expires
+	cacheTTL := certTTL - ONE_DAY
+	wrapper.dynamicCerts.Set(name, &keyPair, cacheTTL)
 	return &keyPair, nil
 }
