@@ -80,11 +80,8 @@ func (wrapper *HandlerWrapper) intercept(resp http.ResponseWriter, req *http.Req
 		respBadGateway(resp, msg)
 		return
 	}
-	tlsConfig := &tls.Config{}
-	if wrapper.cryptoConf.ServerTLSConfig != nil {
-		// Copy the provided tlsConfig
-		*tlsConfig = *wrapper.cryptoConf.ServerTLSConfig
-	}
+	tlsConfig := makeConfig(wrapper.cryptoConf.ServerTLSConfig)
+
 	// Upgrade to a TLS connection that presents our dynamically generated cert
 	// for the HOST
 	tlsConfig.Certificates = []tls.Certificate{*cert}
@@ -116,6 +113,17 @@ func (wrapper *HandlerWrapper) intercept(resp http.ResponseWriter, req *http.Req
 	// Tell the client that their CONNECT was okay - client can now try to
 	// connect to our MITM'ing HTTP server
 	connIn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+}
+
+// makeConfig makes a copy of a tls config if provided. Otherwise returns an
+// empty tls config.
+func makeConfig(template *tls.Config) *tls.Config {
+	tlsConfig := &tls.Config{}
+	if template != nil {
+		// Copy the provided tlsConfig
+		*tlsConfig = *template
+	}
+	return tlsConfig
 }
 
 func hostIncludingPort(req *http.Request) (host string) {
